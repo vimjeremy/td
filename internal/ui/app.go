@@ -37,7 +37,6 @@ type viewKind int
 
 const (
 	vAll viewKind = iota
-	vToday
 	vUpcoming
 	vDone
 	vProject
@@ -87,13 +86,8 @@ func (m *Model) Init() tea.Cmd { return nil }
 
 // buildViews rebuilds the sidebar from the current projects and tags.
 func (m *Model) buildViews() {
-	day := func(now time.Time, plus int) *time.Time {
-		d := model.Day(now).AddDate(0, 0, plus)
-		return &d
-	}
 	vs := []view{
-		{kind: vAll, label: "All", filter: func(time.Time) model.Filter { return model.Filter{All: true} }}, // open and done
-		{kind: vToday, label: "Today", filter: func(n time.Time) model.Filter { return model.Filter{DueTo: day(n, 0)} }},
+		{kind: vAll, label: "All", filter: func(time.Time) model.Filter { return model.Filter{All: true} }},    // open and done
 		{kind: vUpcoming, label: "Upcoming", filter: func(n time.Time) model.Filter { return model.Filter{} }}, // everything still to be done
 		{kind: vDone, label: "Done", filter: func(time.Time) model.Filter { return model.Filter{DoneOnly: true} }},
 	}
