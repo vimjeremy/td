@@ -8,6 +8,7 @@ type Task struct {
 	ID          int64
 	Title       string
 	Notes       string
+	Dir         string // directory the task relates to; empty when unset
 	Project     string // empty means "inbox"
 	Due         *time.Time
 	Tags        []string

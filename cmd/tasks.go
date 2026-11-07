@@ -21,6 +21,8 @@ func init() {
 	lsCmd.Flags().Bool("week", false, "only tasks due in the next 7 days (including today)")
 	lsCmd.Flags().Bool("all", false, "include completed tasks")
 	lsCmd.Flags().Bool("done", false, "only completed tasks")
+	addCmd.Flags().String("dir", "", "directory the task relates to (. for the current one)")
+	editCmd.Flags().String("dir", "", "directory the task relates to (. for the current one, empty to clear)")
 	editCmd.Flags().String("title", "", "replace the title")
 	editCmd.Flags().String("notes", "", "replace the notes")
 	rmCmd.Flags().BoolP("yes", "y", false, "do not ask for confirmation")
@@ -29,6 +31,7 @@ func init() {
 var addCmd = &cobra.Command{
 	Use:   "add <text>",
 	Short: "Add a task, e.g. td add Call dentist +personal @phone due:tomorrow",
+	Long:  syntaxHelp("td add Call dentist +personal @phone due:tomorrow dir:~/code note: ask about the invoice"),
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		p, err := parse.Input(args, time.Now())
@@ -37,6 +40,9 @@ var addCmd = &cobra.Command{
 		}
 		t, err := p.ToTask()
 		if err != nil {
+			return err
+		}
+		if err := applyDirFlag(cmd, &t); err != nil {
 			return err
 		}
 		st, err := openStore()
@@ -133,6 +139,7 @@ var undoCmd = &cobra.Command{Use: "undo <id...>", Short: "Reopen completed tasks
 var editCmd = &cobra.Command{
 	Use:   "edit <id> [text]",
 	Short: "Change a task, e.g. td edit 4 due:mon (given fields replace existing ones)",
+	Long:  syntaxHelp("td edit 4 due:mon dir:none note: moved to monday"),
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ids, err := parseIDs(args[:1])
@@ -155,6 +162,9 @@ var editCmd = &cobra.Command{
 		p.Apply(&t)
 		if cmd.Flags().Changed("title") {
 			t.Title, _ = cmd.Flags().GetString("title")
+		}
+		if err := applyDirFlag(cmd, &t); err != nil {
+			return err
 		}
 		if cmd.Flags().Changed("notes") {
 			t.Notes, _ = cmd.Flags().GetString("notes")
@@ -233,6 +243,7 @@ var showCmd = &cobra.Command{
 			}
 		}
 		row("project", t.Project)
+		row("dir", t.Dir)
 		if len(t.Tags) > 0 {
 			row("tags", "@"+strings.Join(t.Tags, " @"))
 		}
@@ -246,4 +257,36 @@ var showCmd = &cobra.Command{
 		row("notes", t.Notes)
 		return nil
 	},
+}
+
+// applyDirFlag sets t.Dir from --dir when the flag was given; an empty value clears it.
+func applyDirFlag(cmd *cobra.Command, t *model.Task) error {
+	if !cmd.Flags().Changed("dir") {
+		return nil
+	}
+	v, _ := cmd.Flags().GetString("dir")
+	if strings.TrimSpace(v) == "" {
+		t.Dir = ""
+		return nil
+	}
+	d, err := parse.ExpandDir(v)
+	if err != nil {
+		return err
+	}
+	t.Dir = d
+	return nil
+}
+
+// syntaxHelp is the shared quick-add syntax description for add and edit.
+func syntaxHelp(example string) string {
+	return `Everything that is not a token becomes the title. Tokens:
+
+  +name        project (+none clears it)
+  @name        tag; repeat for several
+  due:<date>   today, tomorrow, a weekday, +3d, +2w or 2026-12-01 (due:none clears)
+  dir:<path>   directory the task relates to; . and ~ work (dir:none clears)
+  note: <text> notes; takes the rest of the line, so put it last (note:none clears)
+
+Example:
+  ` + example
 }

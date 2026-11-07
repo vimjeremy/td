@@ -39,6 +39,7 @@ var migrations = []string{
 		PRIMARY KEY (task_id, tag_id)
 	);
 	CREATE INDEX tasks_due ON tasks(due);`,
+	`ALTER TABLE tasks ADD COLUMN dir TEXT NOT NULL DEFAULT '';`,
 }
 
 // DefaultPath returns $TD_DB, else $XDG_DATA_HOME/td/td.db, else ~/.local/share/td/td.db.

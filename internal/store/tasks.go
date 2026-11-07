@@ -20,7 +20,7 @@ const (
 var ErrNotFound = errors.New("task not found")
 
 const selectTasks = `
-SELECT t.id, t.title, t.notes, COALESCE(p.name, ''),
+SELECT t.id, t.title, t.notes, COALESCE(p.name, ''), t.dir,
        CAST(t.due AS TEXT), CAST(t.created_at AS TEXT), CAST(t.completed_at AS TEXT),
        COALESCE((SELECT group_concat(g.name, ',')
                  FROM task_tags x JOIN tags g ON g.id = x.tag_id
@@ -82,8 +82,8 @@ func (s *Store) Add(t *model.Task) error {
 		return err
 	}
 	res, err := tx.Exec(
-		`INSERT INTO tasks(title, notes, project_id, due) VALUES(?, ?, ?, ?)`,
-		t.Title, t.Notes, pid, dueArg(t.Due))
+		`INSERT INTO tasks(title, notes, dir, project_id, due) VALUES(?, ?, ?, ?, ?)`,
+		t.Title, t.Notes, t.Dir, pid, dueArg(t.Due))
 	if err != nil {
 		return err
 	}
@@ -108,8 +108,8 @@ func (s *Store) Update(t *model.Task) error {
 		return err
 	}
 	res, err := tx.Exec(
-		`UPDATE tasks SET title = ?, notes = ?, project_id = ?, due = ? WHERE id = ?`,
-		t.Title, t.Notes, pid, dueArg(t.Due), t.ID)
+		`UPDATE tasks SET title = ?, notes = ?, dir = ?, project_id = ?, due = ? WHERE id = ?`,
+		t.Title, t.Notes, t.Dir, pid, dueArg(t.Due), t.ID)
 	if err != nil {
 		return err
 	}
@@ -260,7 +260,7 @@ func scanTask(r scanner) (model.Task, error) {
 		due, created, done sql.NullString
 		tags               string
 	)
-	if err := r.Scan(&t.ID, &t.Title, &t.Notes, &t.Project,
+	if err := r.Scan(&t.ID, &t.Title, &t.Notes, &t.Project, &t.Dir,
 		&due, &created, &done, &tags); err != nil {
 		return t, err
 	}

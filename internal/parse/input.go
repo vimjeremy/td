@@ -17,16 +17,30 @@ type Parsed struct {
 	Tags       []string
 	Due        *time.Time
 	ClearDue   bool // due:none was given
+	Dir        string
+	HasDir     bool // dir: was given (dir:none clears it)
+	Note       string
+	HasNote    bool // note: was given (note:none clears it)
 }
 
 // Input parses quick-add tokens. Arguments are split on whitespace so a single
 // quoted string works as well as separate words.
 func Input(args []string, now time.Time) (Parsed, error) {
 	var p Parsed
-	var words []string
+	var words, noteWords []string
+	inNote := false
 	for _, arg := range args {
 		for _, tok := range strings.Fields(arg) {
+			if inNote { // note: takes the rest of the line
+				noteWords = append(noteWords, tok)
+				continue
+			}
 			switch {
+			case strings.HasPrefix(tok, "note:"):
+				inNote, p.HasNote = true, true
+				if rest := tok[len("note:"):]; rest != "" {
+					noteWords = append(noteWords, rest)
+				}
 			case len(tok) > 1 && tok[0] == '+':
 				p.HasProject = true
 				p.Project = tok[1:]
@@ -35,6 +49,16 @@ func Input(args []string, now time.Time) (Parsed, error) {
 				}
 			case len(tok) > 1 && tok[0] == '@':
 				p.Tags = appendUnique(p.Tags, tok[1:])
+			case strings.HasPrefix(tok, "dir:"):
+				p.HasDir = true
+				p.Dir = ""
+				if v := tok[len("dir:"):]; v != "" && v != "none" {
+					d, err := ExpandDir(v)
+					if err != nil {
+						return p, err
+					}
+					p.Dir = d
+				}
 			case strings.HasPrefix(tok, "due:"):
 				v := tok[len("due:"):]
 				if v == "" || v == "none" {
@@ -53,6 +77,9 @@ func Input(args []string, now time.Time) (Parsed, error) {
 		}
 	}
 	p.Title = strings.Join(words, " ")
+	if p.Note = strings.Join(noteWords, " "); p.Note == "none" {
+		p.Note = ""
+	}
 	return p, nil
 }
 
@@ -73,6 +100,8 @@ func (p Parsed) ToTask() (model.Task, error) {
 	return model.Task{
 		Title:   p.Title,
 		Project: p.Project,
+		Dir:     p.Dir,
+		Notes:   p.Note,
 		Tags:    p.Tags,
 		Due:     p.Due,
 	}, nil
@@ -86,6 +115,12 @@ func (p Parsed) Apply(t *model.Task) {
 	}
 	if p.HasProject {
 		t.Project = p.Project
+	}
+	if p.HasDir {
+		t.Dir = p.Dir
+	}
+	if p.HasNote {
+		t.Notes = p.Note
 	}
 	if len(p.Tags) > 0 {
 		t.Tags = p.Tags

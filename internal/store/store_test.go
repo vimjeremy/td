@@ -103,3 +103,19 @@ func TestCountsKeepDoneUntilDeleted(t *testing.T) {
 	s.Delete(a.ID)
 	check(0, 0, "deleted")
 }
+
+func TestDirRoundTrip(t *testing.T) {
+	s := open(t)
+	a := &model.Task{Title: "a", Dir: "/srv/app"}
+	if err := s.Add(a); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Get(a.ID); got.Dir != "/srv/app" {
+		t.Errorf("dir = %q", got.Dir)
+	}
+	a.Dir = ""
+	s.Update(a)
+	if got, _ := s.Get(a.ID); got.Dir != "" {
+		t.Errorf("dir not cleared: %q", got.Dir)
+	}
+}

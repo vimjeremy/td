@@ -3,6 +3,9 @@ package ui
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,8 +39,7 @@ const (
 type viewKind int
 
 const (
-	vAll viewKind = iota
-	vUpcoming
+	vUpcoming viewKind = iota
 	vDone
 	vProject
 	vTag
@@ -62,7 +64,7 @@ type Model struct {
 	mode      mode
 	kind      inputKind
 	input     textinput.Model
-	form      [5]textinput.Model // add/edit form, see the f* constants
+	form      [6]textinput.Model // add/edit form, see the f* constants
 	formIdx   int
 	origNotes string         // notes of the task being edited, to keep multi-line text intact
 	expanded  map[int64]bool // tasks whose details are shown
@@ -87,7 +89,7 @@ func (m *Model) Init() tea.Cmd { return nil }
 // buildViews rebuilds the sidebar from the current projects and tags.
 func (m *Model) buildViews() {
 	vs := []view{
-		{kind: vAll, label: "All", filter: func(time.Time) model.Filter { return model.Filter{All: true} }},    // open and done
+		{label: "All", header: true},
 		{kind: vUpcoming, label: "Upcoming", filter: func(n time.Time) model.Filter { return model.Filter{} }}, // everything still to be done
 		{kind: vDone, label: "Done", filter: func(time.Time) model.Filter { return model.Filter{DoneOnly: true} }},
 	}
@@ -125,6 +127,12 @@ func (m *Model) buildViews() {
 	}
 	m.views = vs
 	m.viewIdx = 0
+	for i, v := range vs { // default: the first entry that is not a heading
+		if !v.header {
+			m.viewIdx = i
+			break
+		}
+	}
 	for i, v := range vs {
 		if !v.header && v.kind == prev.kind && v.label == prev.label {
 			m.viewIdx = i
@@ -166,6 +174,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
 		return m, nil
+	case shellDoneMsg:
+		m.reload() // the shell may have run td commands
+		if msg.err != nil {
+			m.status = "shell: " + msg.err.Error()
+		}
+		return m, nil
 	case tea.KeyMsg:
 		switch m.mode {
 		case modeInput:
@@ -182,7 +196,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) moveSection(dir int) {
 	var starts []int // first selectable entry of each section
 	for i, v := range m.views {
-		if i == 0 || (m.views[i-1].header && !v.header) {
+		if !v.header && (i == 0 || m.views[i-1].header) {
 			starts = append(starts, i)
 		}
 	}
@@ -308,15 +322,43 @@ func (m *Model) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if t.Due != nil {
 				date = t.Due.Format("2006-01-02")
 			}
-			m.startForm(inEdit, formValues{title: t.Title, project: t.Project, tag: strings.Join(t.Tags, " "), date: date, notes: t.Notes})
+			m.startForm(inEdit, formValues{title: t.Title, project: t.Project, tag: strings.Join(t.Tags, " "), date: date, dir: t.Dir, notes: t.Notes})
 			return m, textinput.Blink
 		}
 	case "d":
 		if ok {
 			m.mode = modeConfirm
 		}
+	case "c":
+		if ok {
+			return m, m.openShell(t)
+		}
 	}
 	return m, nil
+}
+
+type shellDoneMsg struct{ err error }
+
+// openShell suspends the UI and runs $SHELL inside the task's directory; the UI
+// comes back when the shell exits. (A program cannot change its parent shell's
+// directory, so a subshell is the way to "cd" from here.)
+func (m *Model) openShell(t model.Task) tea.Cmd {
+	if t.Dir == "" {
+		m.status = "this task has no directory"
+		return nil
+	}
+	if fi, err := os.Stat(t.Dir); err != nil || !fi.IsDir() {
+		m.status = "directory not found: " + t.Dir
+		return nil
+	}
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+	c := exec.Command(shell)
+	c.Dir = t.Dir
+	c.Env = append(os.Environ(), "TD_TASK_ID="+strconv.FormatInt(t.ID, 10))
+	return tea.ExecProcess(c, func(err error) tea.Msg { return shellDoneMsg{err} })
 }
 
 // check reports a store error in the status line and reloads the list.
@@ -349,10 +391,11 @@ const (
 	fProject
 	fTag
 	fDate
+	fDir
 	fNotes
 )
 
-type formValues struct{ title, project, tag, date, notes string }
+type formValues struct{ title, project, tag, date, dir, notes string }
 
 // flatten shows multi-line notes on the single-line notes field.
 func flatten(s string) string { return strings.Join(strings.Fields(s), " ") }
@@ -368,6 +411,7 @@ func (m *Model) startForm(kind inputKind, v formValues) {
 		fProject: {"project ", "work", 14},
 		fTag:     {"tag ", "errand, home", 18},
 		fDate:    {"date ", "fri, +3d", 10},
+		fDir:     {"dir ", "/path/the/task/relates/to (optional)", wide},
 		fNotes:   {"notes ", "extra details (shown when you press enter on a task)", wide},
 	} {
 		in := textinput.New()
@@ -378,10 +422,25 @@ func (m *Model) startForm(kind inputKind, v formValues) {
 	m.form[fProject].SetValue(v.project)
 	m.form[fTag].SetValue(v.tag)
 	m.form[fDate].SetValue(v.date)
+	m.form[fDir].SetValue(v.dir)
 	m.origNotes = v.notes
 	m.form[fNotes].SetValue(flatten(v.notes))
 	m.focusField(fTitle)
 	m.form[fTitle].CursorEnd()
+}
+
+// expandDirField rewrites a leading ~ or $VAR in the dir field to the real path
+// as you leave it, so you can see what will be saved.
+func (m *Model) expandDirField() {
+	if m.formIdx != fDir {
+		return
+	}
+	if d, err := parse.ExpandPath(m.form[fDir].Value()); err != nil {
+		m.status = "error: " + err.Error()
+	} else {
+		m.status = ""
+		m.form[fDir].SetValue(d)
+	}
 }
 
 func (m *Model) focusField(i int) {
@@ -402,6 +461,7 @@ func (m *Model) submitForm() {
 	t := model.Task{
 		Title:   strings.TrimSpace(m.form[fTitle].Value()),
 		Project: strings.TrimSpace(m.form[fProject].Value()),
+		Dir:     strings.TrimSpace(m.form[fDir].Value()), // expanded below
 		Notes:   strings.TrimSpace(m.form[fNotes].Value()),
 	}
 	for _, g := range strings.FieldsFunc(m.form[fTag].Value(), func(r rune) bool { return r == ',' || r == ' ' }) {
@@ -410,8 +470,12 @@ func (m *Model) submitForm() {
 	if t.Notes == flatten(m.origNotes) {
 		t.Notes = m.origNotes // untouched: keep original line breaks
 	}
+	// Leading ~ and $VAR in the directory are expanded; everything else is literal.
 	var err error
-	if d := strings.TrimSpace(m.form[fDate].Value()); d != "" {
+	if t.Dir, err = parse.ExpandPath(t.Dir); err == nil {
+		m.form[fDir].SetValue(t.Dir)
+	}
+	if d := strings.TrimSpace(m.form[fDate].Value()); d != "" && err == nil {
 		var due time.Time
 		if due, err = parse.Date(d, time.Now()); err == nil {
 			t.Due = &due
@@ -445,7 +509,7 @@ func (m *Model) submitForm() {
 
 // searchText is what the "/" filter matches against.
 func searchText(t model.Task) string {
-	return strings.Join(append([]string{t.Title, t.Project, t.Notes}, t.Tags...), " ")
+	return strings.Join(append([]string{t.Title, t.Project, t.Dir, t.Notes}, t.Tags...), " ")
 }
 
 func (m *Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -454,8 +518,10 @@ func (m *Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "esc", "ctrl+c":
 			m.mode, m.status = modeNormal, ""
 		case "tab":
+			m.expandDirField()
 			m.focusField(m.formIdx + 1)
 		case "shift+tab":
+			m.expandDirField()
 			m.focusField(m.formIdx - 1)
 		case "enter":
 			m.submitForm()
@@ -507,7 +573,7 @@ func (m *Model) View() string {
 	}
 	bodyH := max(3, m.h-2)
 	if m.mode == modeInput && m.kind != inFilter {
-		bodyH = max(3, m.h-4) // the form takes three footer lines
+		bodyH = max(3, m.h-5) // the form takes four footer lines
 	}
 	listW := max(20, m.w-sidebarWidth-3)
 
@@ -516,7 +582,9 @@ func (m *Model) View() string {
 		line := " " + v.label
 		switch {
 		case v.header:
-			side = append(side, "") // blank line before each category
+			if len(side) > 0 {
+				side = append(side, "") // blank line before each category
+			}
 			line = headerText.Render(" " + strings.ToUpper(v.label))
 		case i == m.viewIdx && !m.focusList:
 			line = selected.Render(pad(line, sidebarWidth-1))
@@ -542,7 +610,7 @@ func (m *Model) View() string {
 	switch {
 	case m.mode == modeInput && m.kind != inFilter:
 		row := strings.Join([]string{m.form[fProject].View(), m.form[fTag].View(), m.form[fDate].View()}, "  ")
-		foot = m.form[fTitle].View() + "\n" + row + "\n" + m.form[fNotes].View()
+		foot = m.form[fTitle].View() + "\n" + row + "\n" + m.form[fDir].View() + "\n" + m.form[fNotes].View()
 	case m.mode == modeInput:
 		foot = m.input.View()
 	case m.mode == modeConfirm:
@@ -629,7 +697,7 @@ func detailLines(t model.Task, w int, now time.Time) []string {
 	if len(t.Tags) > 0 {
 		tags = strings.Join(t.Tags, ", ")
 	}
-	out := []string{row("project", project), row("due", due), row("tags", tags)}
+	out := []string{row("project", project), row("due", due), row("tags", tags), row("dir", t.Dir)}
 
 	text := strings.TrimSpace(t.Notes)
 	if text == "" {
@@ -685,6 +753,7 @@ const helpText = `Keys:
   enter        expand / collapse the task's details
   e            edit task 
   d            delete task
+  c            open a shell in the task's directory (exit to come back)
   /            search
   ?            help
   q            quit
