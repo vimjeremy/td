@@ -17,10 +17,6 @@ make install
 
 | Command | What it does |
 |---|---|
-
-
-
-
 | `td add <task>` | Add a task |
 | `td ls [+project] [@tag]` | List tasks |
 | `td show <id>` | Show the details of a task |
