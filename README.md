@@ -1,8 +1,11 @@
 # td
 
-<video src="media/demo.mp4" controls muted width="100%"></video>
+<video controls muted width="100%">
+  <source src="media/demo.webm" type="video/webm">
+  <source src="media/demo.mp4" type="video/mp4">
+</video>
 
-[Watch the demo](media/demo.mp4) if the video does not play above.
+[Watch the demo](media/demo.webm) if the video does not play above.
 
 A fast terminal todo list written in Go for vim users. Add tasks with one command, or enter the TUI for a keyboard-driven full-screen view.
 
