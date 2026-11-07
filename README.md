@@ -1,11 +1,6 @@
 # td
 
-<video controls muted width="100%">
-  <source src="media/demo.webm" type="video/webm">
-  <source src="media/demo.mp4" type="video/mp4">
-</video>
-
-[Watch the demo](media/demo.webm) if the video does not play above.
+https://github.com/user-attachments/assets/a70a2553-6557-40ae-ad38-cd8ceb3bbc25
 
 A fast terminal todo list written in Go for vim users. Add tasks with one command, or enter the TUI for a keyboard-driven full-screen view.
 
@@ -22,6 +17,10 @@ make install
 
 | Command | What it does |
 |---|---|
+
+
+
+
 | `td add <task>` | Add a task |
 | `td ls [+project] [@tag]` | List tasks |
 | `td show <id>` | Show the details of a task |
